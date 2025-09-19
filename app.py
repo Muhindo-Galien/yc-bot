@@ -40,20 +40,8 @@ prompt = ChatPromptTemplate.from_messages([
 question_answer_chain = create_stuff_documents_chain(llm, prompt)
 rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
-class Reference:
-    '''
-    A class to store previously response from the chatGPT openAI API
-    '''
-    def __init__(self):
-        self.response = ""
-
-    def add_reference(self, text: str, url: str):
-        self.response += f"{text}\n{url}\n"
-
-    def get_reference(self):
-        return self.reference
-
-reference = Reference()
+# Store conversation history per user
+conversation_history = {}
 
 # All handlers should be attached to the Router (or Dispatcher)
 
@@ -73,9 +61,12 @@ async def command_start_handler(message: Message) -> None:
     # Bot instance: `bot.send_message(chat_id=message.chat.id, ...)`
     await message.answer(f"Hello, {html.bold(message.from_user.full_name)}!")
 
-def clear_past_conversation():
-    reference.reference = ""
-
+def clear_past_conversation(user_id: int):
+    """Clear conversation history for a specific user"""
+    if user_id in conversation_history:
+        del conversation_history[user_id]
+    print(f"Cleared conversation history for user {user_id}")
+    
 @dp.message(Command("help"))
 async def help_handler(message: Message) -> None:
     await message.answer("""
@@ -85,8 +76,9 @@ async def help_handler(message: Message) -> None:
 
 @dp.message(Command("clear"))
 async def clear_handler(message: Message) -> None:
-    clear_past_conversation()
-    await message.answer("Conversation cleared!")
+    user_id = message.from_user.id
+    clear_past_conversation(user_id)
+    await message.answer("✅ Conversation history cleared! Starting fresh.")
 
 
 @dp.message()
@@ -94,17 +86,30 @@ async def rag_message(message: Message):
     """
     This function will handle the message from the user and send it to the RAG system
     """
-    # Get the message from the user
+    user_id = message.from_user.id
     user_message = message.text
-    print(f">>> User message: {user_message}")
+    print(f">>> User {user_id} message: {user_message}")
 
     try:
+        # Initialize conversation history for new users
+        if user_id not in conversation_history:
+            conversation_history[user_id] = []
+        
+        # Add user message to history
+        conversation_history[user_id].append(f"Human: {user_message}")
+        
         # Use RAG chain to get response
         response = rag_chain.invoke({"input": user_message})
         result = response["answer"]
         
+        # Add bot response to history
+        conversation_history[user_id].append(f"Assistant: {result}")
+        
+        # Keep only last 10 exchanges to prevent memory issues
+        if len(conversation_history[user_id]) > 20:
+            conversation_history[user_id] = conversation_history[user_id][-20:]
+        
         print(f">>> RAG Response: {result}")
-        reference.response = result
         await message.answer(result)
         
     except Exception as e:
